@@ -5,13 +5,17 @@ A hardware project exploring audio sampling and playback.
 
 ## Technical Notes
 
-### Codec -> GPIO Mapping
-**MOSI:** GPIO7
-**MISO:** GPIO5
-**CLK:** GPIO4
-**RST:** GPIO8
-**CS:** GPIO6
+### Reference
 
-**XDCS:** GPIO0
-**SDCS:** GPIO1
-**DREQ:** GPIO10
+-------------------------------------------------
+| GPIO | USE  | Description                     |
+-------------------------------------------------
+|    7 | SDI  |                                 |
+|    5 | SDO  |                                 |
+|    4 | CLK  |                                 |
+|    8 | RST  |                                 |
+|    6 | XDCS | Audio Codec Control Chip Select |
+|    0 | SDCS | SD Card Chip Select             |
+|   10 | DRQ  |                                 |
+-------------------------------------------------
+
