@@ -6,7 +6,7 @@ use esp_idf_hal::{
     gpio::PinDriver,
     prelude::Peripherals,
     spi::{
-        config::{Config, DriverConfig, Mode, MODE_3},
+        config::{Config, DriverConfig, Mode, MODE_2, MODE_3},
         Spi, SpiBusDriver, SpiDeviceDriver, SpiDriver, SpiDriverConfig, SpiSharedDeviceDriver,
         SpiSingleDeviceDriver, SPI2,
     },
@@ -27,9 +27,9 @@ fn main() -> anyhow::Result<()> {
 
     let peripherals = Peripherals::take().unwrap();
 
-    let sclk = peripherals.pins.gpio4;
+    let sclk = peripherals.pins.gpio6;
 
-    let sdo = peripherals.pins.gpio5;
+    let sdo = peripherals.pins.gpio2;
     let sdi = Some(peripherals.pins.gpio7);
 
     let mut reset = PinDriver::output(peripherals.pins.gpio8)?;
@@ -48,7 +48,9 @@ fn main() -> anyhow::Result<()> {
     // let ctrl_driver = SpiSharedDeviceDriver::new(&device, &ctrl_config)?;
 
     let mut card_cs = PinDriver::output(peripherals.pins.gpio0)?;
-    let data_config = Config::default().baudrate(MegaHertz(12).into());
+    let data_config = Config::default()
+        .baudrate(MegaHertz(12).into())
+        .data_mode(MODE_2);
     let data_driver = SpiSharedDeviceDriver::new(&device, &data_config)?;
     // let data_driver = SpiDeviceDriver::new(device, Some(card_cs), &data_config);
     // let data_driver = SpiBusDriver::new(device, &data_config)?;
