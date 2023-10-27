@@ -27,6 +27,10 @@ embassy = ["esp-idf-svc/embassy-sync", "esp-idf-svc/critical-section", "esp-idf-
 log = { version = "0.4", default-features = false }
 esp-idf-svc = { version = "0.47.1", default-features = false }
 anyhow = "1.0.75"
+embedded-sdmmc = { git = "https://github.com/AnyTimeTraveler/embedded-sdmmc-rs.git", branch = "update-embedded-hal" }
+embedded-hal = "0.2.7"
+esp-idf-hal = "0.42.1"
+chrono = "0.4.31"
 
 [build-dependencies]
 embuild = "0.31.3"
