@@ -1,21 +1,74 @@
 mod block;
 
-use embedded_sdmmc::{Volume, VolumeIdx, VolumeManager};
+use std::{error::Error, fmt::Display, str};
+
+use embedded_sdmmc::{SdCard, SdCardError, Volume, VolumeIdx, VolumeManager};
 use esp_idf_hal::{
-    delay::{Delay, Ets},
-    gpio::PinDriver,
+    delay::Ets,
+    gpio::{Gpio0, Output, OutputPin, PinDriver},
     prelude::Peripherals,
     spi::{
-        config::{Config, DriverConfig, Mode, MODE_2, MODE_3},
-        Spi, SpiBusDriver, SpiDeviceDriver, SpiDriver, SpiDriverConfig, SpiSharedDeviceDriver,
-        SpiSingleDeviceDriver, SPI2,
+        config::{Config, MODE_0},
+        SpiDeviceDriver, SpiDriver, SpiDriverConfig, SpiSharedDeviceDriver, SPI2,
     },
-    units::MegaHertz,
+    units::{KiloHertz, MegaHertz},
 };
 // use esp_idf_svc::hal::spi::{SpiDriver, SpiSharedDeviceDriver};
 use esp_idf_svc::hal::units::Hertz;
 
 use crate::block::Clock;
+
+#[derive(Debug)]
+struct SdError(pub embedded_sdmmc::Error<SdCardError>);
+
+impl Display for SdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+impl Error for SdError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+
+    fn description(&self) -> &str {
+        "description() is deprecated; use Display"
+    }
+
+    fn cause(&self) -> Option<&dyn Error> {
+        self.source()
+    }
+}
+
+fn open_file<'s, 'p>(
+    sd: SdCard<&mut SpiDeviceDriver<'s, &SpiDriver<'s>>, PinDriver<'p, Gpio0, Output>, Ets>,
+    file_name: &str,
+) -> anyhow::Result<String> {
+    let mut volume_mgr = VolumeManager::new(sd, Clock);
+    log::debug!("Created Volume Manager");
+    let volume = volume_mgr.open_raw_volume(VolumeIdx(0)).map_err(SdError)?;
+    log::debug!("Opened Volume {:?}", volume);
+    let root_dir = volume_mgr.open_root_dir(volume).map_err(SdError)?;
+    let file = volume_mgr
+        .open_file_in_dir(root_dir, file_name, embedded_sdmmc::Mode::ReadOnly)
+        .map_err(SdError)?;
+    log::debug!("Opened file: {}", file_name);
+    let mut parts: Vec<u8> = Vec::new();
+    while !volume_mgr.file_eof(file).unwrap() {
+        let mut buffer = [0u8; 32];
+        let num_read = volume_mgr.read(file, &mut buffer).unwrap();
+        for b in &buffer[0..num_read] {
+            parts.push(*b)
+        }
+    }
+
+    volume_mgr.close_file(file).map_err(SdError)?;
+    volume_mgr.close_dir(root_dir).map_err(SdError)?;
+
+    let string = std::str::from_utf8(parts.as_slice())?.to_string();
+    Ok(string)
+}
 
 fn main() -> anyhow::Result<()> {
     // It is necessary to call this function once. Otherwise some patches to the runtime
@@ -28,6 +81,9 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take().unwrap();
 
     let sclk = peripherals.pins.gpio6;
+
+    let mut test = PinDriver::output(peripherals.pins.gpio9)?;
+    test.set_high()?;
 
     let sdo = peripherals.pins.gpio2;
     let sdi = Some(peripherals.pins.gpio7);
@@ -43,25 +99,21 @@ fn main() -> anyhow::Result<()> {
         &SpiDriverConfig::default(),
     )?;
 
-    // let mut cs = PinDriver::output(peripherals.pins.gpio6)?;
-    // let ctrl_config = Config::default().baudrate(Hertz(250000));
-    // let ctrl_driver = SpiSharedDeviceDriver::new(&device, &ctrl_config)?;
+    let mut ctrl_cs = PinDriver::output(peripherals.pins.gpio1)?;
+    let ctrl_config = Config::default().baudrate(Hertz(250000));
+    let ctrl_driver = SpiSharedDeviceDriver::new(&device, &ctrl_config)?;
 
-    let mut card_cs = PinDriver::output(peripherals.pins.gpio0)?;
-    let data_config = Config::default()
-        .baudrate(MegaHertz(12).into())
-        .data_mode(MODE_2);
-    let data_driver = SpiSharedDeviceDriver::new(&device, &data_config)?;
-    // let data_driver = SpiDeviceDriver::new(device, Some(card_cs), &data_config);
-    // let data_driver = SpiBusDriver::new(device, &data_config)?;
-
-    // let data_driver = SpiDeviceDriver::new(&device, None, &data_config)?;
+    let mut sd_cs = PinDriver::output(peripherals.pins.gpio0)?;
+    let sd_config = Config::default()
+        .baudrate(KiloHertz(400).into())
+        .data_mode(MODE_0);
+    let sd_driver = SpiSharedDeviceDriver::new(&device, &sd_config)?;
 
     // Setup chip selects
     {
         reset.set_low()?;
-        // cs.set_high()?;
-        card_cs.set_high()?;
+        ctrl_cs.set_high()?;
+        sd_cs.set_high()?;
     }
 
     // Reset
@@ -70,31 +122,14 @@ fn main() -> anyhow::Result<()> {
         reset.set_high()?;
     }
 
-    log::info!("Locking driver");
-    data_driver.lock(|driver| {
-        let sd = embedded_sdmmc::SdCard::new(driver, card_cs, Ets);
-        log::info!("Card opened ({} bytes)", sd.num_bytes().unwrap());
-        let mut volume_mgr = VolumeManager::new(sd, Clock);
-        log::info!("Created Volume Manager");
-        let volume = volume_mgr.open_raw_volume(VolumeIdx(0)).unwrap();
-        log::info!("Opened Volume {:?}", volume);
-        let root_dir = volume_mgr.open_root_dir(volume).unwrap();
-        let file = volume_mgr
-            .open_file_in_dir(root_dir, "track001.mp3", embedded_sdmmc::Mode::ReadOnly)
-            .unwrap();
-        log::info!("Opened file!");
-        // while !volume_mgr.file_eof(file).unwrap() {
-        //     let mut buffer = [0u8; 32];
-        //     let num_read = volume_mgr.read(file, &mut buffer).unwrap();
-        //     for b in &buffer[0..num_read] {
-        //         print!("{}", *b as char);
-        //     }
-        // }
-
-        volume_mgr.close_file(file).unwrap();
-        volume_mgr.close_dir(root_dir).unwrap();
+    sd_driver.lock(|driver| {
+        let sd = embedded_sdmmc::SdCard::new(driver, sd_cs, Ets);
+        log::debug!("Card opened ({} bytes)", sd.num_bytes().unwrap());
+        match open_file(sd, "test.txt") {
+            Ok(text) => log::info!("{}", text),
+            Err(err) => log::error!("{:?}", err),
+        };
     });
 
-    log::info!("Hello, world!");
     Ok(())
 }
